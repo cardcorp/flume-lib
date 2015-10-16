@@ -30,79 +30,79 @@ import org.json.JSONArray;
 import org.postgresql.Driver;
 
 public class PostgresJSONSink extends AbstractSink implements Configurable {
-	private String table = null;
-	private String user = null;
-	private String password = null;
-	private String url = null;
-	private Charset encoding = null;
-	private Connection client = null;
-	private CounterGroup counterGroup = new CounterGroup();
-	private PreparedStatement insert = null;
-	private String sqlStatement = null;
+    private String table = null;
+    private String user = null;
+    private String password = null;
+    private String url = null;
+    private Charset encoding = null;
+    private Connection client = null;
+    private CounterGroup counterGroup = new CounterGroup();
+    private PreparedStatement insert = null;
+    private String sqlStatement = null;
 
-	private int batchSize = 0;
+    private int batchSize = 0;
 
-	private static final Logger LOG = LoggerFactory
-			.getLogger(PostgresJSONSink.class);
+    private static final Logger LOG = LoggerFactory
+            .getLogger(PostgresJSONSink.class);
 
-	@Override
-	public void configure(Context context) {
-		try {
-			// Load JDBC driver for Postgres
+    @Override
+    public void configure(Context context) {
+        try {
+            // Load JDBC driver for Postgres
                         Driver driver = new Driver();
-			LOG.info("Loaded postgres JDBC driver");
-		} catch (Exception e) {
-			throw new FlumeException("Postgres JDBC driver not on classpath");
-		}
+            LOG.info("Loaded postgres JDBC driver");
+        } catch (Exception e) {
+            throw new FlumeException("Postgres JDBC driver not on classpath");
+        }
 
-		// Get all configuration variables
-		String hostname = context.getString("hostname", "localhost");
-		int port = context.getInteger("port", 5432);
-		String database = context.getString("database");
-		table = context.getString("table", "flume");
-		user = context.getString("user", null);
-		password = context.getString("password", null);
-		batchSize = context.getInteger("batch-size", 1);
-		encoding = Charset.forName(context.getString("encoding", "UTF8"));
+        // Get all configuration variables
+        String hostname = context.getString("hostname", "localhost");
+        int port = context.getInteger("port", 5432);
+        String database = context.getString("database");
+        table = context.getString("table", "flume");
+        user = context.getString("user", null);
+        password = context.getString("password", null);
+        batchSize = context.getInteger("batch-size", 1);
+        encoding = Charset.forName(context.getString("encoding", "UTF8"));
 
-		// Log the properties
-		LOG.info("Properties: {}", context.getParameters());
+        // Log the properties
+        LOG.info("Properties: {}", context.getParameters());
 
-		// Create the connect string and SQL statement
-		url = "jdbc:postgresql://" + hostname + ":" + port + "/" + database;
-	}
+        // Create the connect string and SQL statement
+        url = "jdbc:postgresql://" + hostname + ":" + port + "/" + database;
+    }
 
-	@Override
-	public Status process() throws EventDeliveryException {
-		// Get the channel and transaction
+    @Override
+    public Status process() throws EventDeliveryException {
+        // Get the channel and transaction
 
-		Status status = Status.READY;
-		Channel channel = getChannel();
-		Transaction transaction = channel.getTransaction();
+        Status status = Status.READY;
+        Channel channel = getChannel();
+        Transaction transaction = channel.getTransaction();
 
-		try {
-			// Start the transaction and get all events
-			transaction.begin();
+        try {
+            // Start the transaction and get all events
+            transaction.begin();
 
-			List<Event> batch = new ArrayList<Event>();
+            List<Event> batch = new ArrayList<Event>();
 
-			for (int i = 0; i < batchSize; ++i) {
-				Event event = channel.take();
+            for (int i = 0; i < batchSize; ++i) {
+                Event event = channel.take();
 
-				if (event == null) {
-					counterGroup.incrementAndGet("batch.underflow");
-				}
-                else {
-				    batch.add(event);
+                if (event == null) {
+                    counterGroup.incrementAndGet("batch.underflow");
                 }
-			}
+                else {
+                    batch.add(event);
+                }
+            }
 
-			if (batch.isEmpty()) {
-				counterGroup.incrementAndGet("batch.empty");
-				status = Status.BACKOFF;
-			} else {
-				// Verify we have a connection
-			    verifyConnection();
+            if (batch.isEmpty()) {
+                counterGroup.incrementAndGet("batch.empty");
+                status = Status.BACKOFF;
+            } else {
+                // Verify we have a connection
+                verifyConnection();
 
                 // Ensure we have a prepared statement.
                 String first = new String(batch.get(0).getBody(), encoding);
@@ -110,13 +110,13 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
                 JSONArray keys = jsonSample.names();
                 insert = prepareSQL(keys, false);
 
-				// For each event in the batch
-				for (Event e : batch) {
-					String line = new String(e.getBody(), encoding);
+                // For each event in the batch
+                for (Event e : batch) {
+                    String line = new String(e.getBody(), encoding);
                     JSONObject json = new JSONObject(line);
 
-					// Re-prepare if we don't have the right number columns.
-					if (json.names().length() != keys.length()) {
+                    // Re-prepare if we don't have the right number columns.
+                    if (json.names().length() != keys.length()) {
                       keys = json.names();
                       insert = prepareSQL(keys, true);
                       LOG.info("Got new set of columns. Re-prepared SQL Statement.");
@@ -144,53 +144,53 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
                                 insert.setBoolean(index++, json.getBoolean(keyName));
                                 break;
                         }
-		            }
+                    }
                     insert.executeUpdate();
                     counterGroup.incrementAndGet("statements.commit");
-				}
-				// Commit to Postgres
-				client.commit();
+                }
+                // Commit to Postgres
+                client.commit();
 
-				// Increment that this was a successful batch
-				counterGroup.incrementAndGet("batch.success");
-			}
+                // Increment that this was a successful batch
+                counterGroup.incrementAndGet("batch.success");
+            }
 
-			// Commit the transmission
-			transaction.commit();
-			transaction.close();
+            // Commit the transmission
+            transaction.commit();
+            transaction.close();
 
-			LOG.debug("Counters: {}", counterGroup);
-		} catch (Exception e) {
-			transaction.rollback();
-			transaction.close();
-			throw new EventDeliveryException(e);
-		}
-		return status;
-	}
+            LOG.debug("Counters: {}", counterGroup);
+        } catch (Exception e) {
+            transaction.rollback();
+            transaction.close();
+            throw new EventDeliveryException(e);
+        }
+        return status;
+    }
 
-	@Override
-	public synchronized void start() {
-		try {
-			openConnection();
-		} catch (SQLException e) {
-			throw new FlumeException(e);
-		}
+    @Override
+    public synchronized void start() {
+        try {
+            openConnection();
+        } catch (SQLException e) {
+            throw new FlumeException(e);
+        }
 
-		super.start();
-		LOG.info("Postgres Sink started");
-	}
+        super.start();
+        LOG.info("Postgres Sink started");
+    }
 
-	@Override
-	public synchronized void stop() {
-		try {
-			destroyConnection();
-		} catch (SQLException e) {
-			throw new FlumeException(e);
-		}
+    @Override
+    public synchronized void stop() {
+        try {
+            destroyConnection();
+        } catch (SQLException e) {
+            throw new FlumeException(e);
+        }
 
-		super.stop();
-		LOG.info("Postgres Sink stopped");
-	}
+        super.stop();
+        LOG.info("Postgres Sink stopped");
+    }
 
     /**
      * Builds the SQL string for the preared Statement.
@@ -224,52 +224,52 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
         return insert;
     }
 
-	/**
-	 * Verifies that a connection is valid and will open one if needed.
-	 *
-	 * @throws SQLException
-	 */
-	private void verifyConnection() throws SQLException {
-		if (client == null) {
-			openConnection();
-		} else if (client.isClosed()) {
-			destroyConnection();
-			openConnection();
-		}
-	}
+    /**
+     * Verifies that a connection is valid and will open one if needed.
+     *
+     * @throws SQLException
+     */
+    private void verifyConnection() throws SQLException {
+        if (client == null) {
+            openConnection();
+        } else if (client.isClosed()) {
+            destroyConnection();
+            openConnection();
+        }
+    }
 
-	/**
-	 * Opens the given connection and creates the prepared statement
-	 *
-	 * @throws SQLException
-	 */
-	private void openConnection() throws SQLException {
-		Properties props = new Properties();
+    /**
+     * Opens the given connection and creates the prepared statement
+     *
+     * @throws SQLException
+     */
+    private void openConnection() throws SQLException {
+        Properties props = new Properties();
 
-		if (user != null && password != null) {
-			props.setProperty("user", user);
-			props.setProperty("password", password);
-		} else if (user != null ^ password != null) {
-			LOG.warn("User or password is set without the other. Continuing with no login auth");
-		}
+        if (user != null && password != null) {
+            props.setProperty("user", user);
+            props.setProperty("password", password);
+        } else if (user != null ^ password != null) {
+            LOG.warn("User or password is set without the other. Continuing with no login auth");
+        }
 
-		client = DriverManager.getConnection(url, props);
-		client.setAutoCommit(false);
-		LOG.info("Opened client connection and prepared insert statement");
-	}
+        client = DriverManager.getConnection(url, props);
+        client.setAutoCommit(false);
+        LOG.info("Opened client connection and prepared insert statement");
+    }
 
-	/**
-	 * Destroys the current JDBC connection, if any.
-	 *
-	 * @throws SQLException
-	 */
-	private void destroyConnection() throws SQLException {
-		if (client != null) {
-			client.close();
-			client = null;
-			LOG.info("Closed client connection");
-			LOG.info("Counters: {}", counterGroup);
-		}
-	}
+    /**
+     * Destroys the current JDBC connection, if any.
+     *
+     * @throws SQLException
+     */
+    private void destroyConnection() throws SQLException {
+        if (client != null) {
+            client.close();
+            client = null;
+            LOG.info("Closed client connection");
+            LOG.info("Counters: {}", counterGroup);
+        }
+    }
 }
 /* vim: set shiftwidth=4 tabstop=4 */
