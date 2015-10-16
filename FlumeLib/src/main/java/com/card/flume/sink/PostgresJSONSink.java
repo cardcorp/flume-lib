@@ -62,7 +62,7 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
 		table = context.getString("table", "flume");
 		user = context.getString("user", null);
 		password = context.getString("password", null);
-		batchSize = context.getInteger("batch.size", 100);
+		batchSize = context.getInteger("batch-size", 1);
 		encoding = Charset.forName(context.getString("encoding", "UTF8"));
 
 		// Log the properties
@@ -91,9 +91,10 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
 
 				if (event == null) {
 					counterGroup.incrementAndGet("batch.underflow");
-					break;
 				}
-				batch.add(event);
+                else {
+				    batch.add(event);
+                }
 			}
 
 			if (batch.isEmpty()) {
@@ -118,12 +119,13 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
 					if (json.names().length() != keys.length()) {
                       keys = json.names();
                       insert = prepareSQL(keys, true);
+                      LOG.info("Got new set of columns. Re-prepared SQL Statement.");
                     }
 
                     // Iterate over the members of the JSON object.
                     int index = 1;
-                    for (Object k: keys) {
-                        String keyName = k.toString();
+                    for (int i = 0; i < keys.length(); ++i) {
+                        String keyName = keys.getString(i);
                         Object value = json.get(keyName);
                         switch (value.getClass().getName()) {
                             case "java.lang.Integer":
@@ -142,10 +144,9 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
                                 insert.setBoolean(index++, json.getBoolean(keyName));
                                 break;
                         }
-
-        			    insert.executeUpdate();
-		       	        counterGroup.incrementAndGet("statements.commit");
 		            }
+                    insert.executeUpdate();
+                    counterGroup.incrementAndGet("statements.commit");
 				}
 				// Commit to Postgres
 				client.commit();
@@ -199,8 +200,12 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
             sqlStatement = "INSERT INTO " + table + " (";
 
             int numColumns = 0;
-            for (Object k : keys) {
-              sqlStatement += k.toString() + ", ";
+            for (int i = 0; i < keys.length(); ++i) {
+              if (i > 0 ) {
+                  sqlStatement += ", ";
+              }
+              String columnName = keys.getString(i);
+              sqlStatement += columnName;
               numColumns++;
             }
 
