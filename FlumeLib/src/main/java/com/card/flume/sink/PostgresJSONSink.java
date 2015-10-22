@@ -17,6 +17,7 @@ import java.util.Properties;
 import org.apache.flume.Channel;
 import org.apache.flume.Context;
 import org.apache.flume.CounterGroup;
+import org.apache.flume.instrumentation.SinkCounter;
 import org.apache.flume.Event;
 import org.apache.flume.EventDeliveryException;
 import org.apache.flume.FlumeException;
@@ -39,6 +40,7 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
     private CounterGroup counterGroup = new CounterGroup();
     private PreparedStatement insert = null;
     private String sqlStatement = null;
+    private SinkCounter sinkCounter;
 
     private int batchSize = 0;
 
@@ -70,6 +72,7 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
 
         // Create the connect string and SQL statement
         url = "jdbc:postgresql://" + hostname + ":" + port + "/" + database;
+        sinkCounter = new SinkCounter(this.getName());
     }
 
     @Override
@@ -85,12 +88,13 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
             transaction.begin();
 
             List<Event> batch = new ArrayList<Event>();
-
-            for (int i = 0; i < batchSize; ++i) {
+            long i = 0;
+            for (; i < batchSize; ++i) {
                 Event event = channel.take();
 
                 if (event == null) {
                     counterGroup.incrementAndGet("batch.underflow");
+                    sinkCounter.incrementBatchUnderflowCount();
                 }
                 else {
                     batch.add(event);
@@ -99,8 +103,9 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
 
             if (batch.isEmpty()) {
                 counterGroup.incrementAndGet("batch.empty");
-                status = Status.BACKOFF;
+                sinkCounter.incrementBatchEmptyCount();
             } else {
+                sinkCounter.addToEventDrainAttemptCount(i);
                 // Verify we have a connection
                 verifyConnection();
 
@@ -124,8 +129,8 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
 
                     // Iterate over the members of the JSON object.
                     int index = 1;
-                    for (int i = 0; i < keys.length(); ++i) {
-                        String keyName = keys.getString(i);
+                    for (int j = 0; j < keys.length(); ++j) {
+                        String keyName = keys.getString(j);
                         Object value = json.get(keyName);
                         switch (value.getClass().getName()) {
                             case "java.lang.Integer":
@@ -153,6 +158,10 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
 
                 // Increment that this was a successful batch
                 counterGroup.incrementAndGet("batch.success");
+                if (i == batchSize) {
+                  sinkCounter.incrementBatchCompleteCount();
+                }
+                sinkCounter.addToEventDrainSuccessCount(i);
             }
 
             // Commit the transmission
@@ -163,7 +172,8 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
         } catch (Exception e) {
             transaction.rollback();
             transaction.close();
-            throw new EventDeliveryException(e);
+            LOG.info(e.getMessage());
+            throw new EventDeliveryException("Failed transaction.", e);
         }
         return status;
     }
@@ -177,6 +187,7 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
         }
 
         super.start();
+        sinkCounter.start();
         LOG.info("Postgres Sink started");
     }
 
@@ -188,6 +199,7 @@ public class PostgresJSONSink extends AbstractSink implements Configurable {
             throw new FlumeException(e);
         }
 
+        sinkCounter.stop();
         super.stop();
         LOG.info("Postgres Sink stopped");
     }
